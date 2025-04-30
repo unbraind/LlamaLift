@@ -1,0 +1,6 @@
+# .cargo/config.toml
+
+[target.x86_64-pc-windows-gnu]
+linker = "x86_64-w64-mingw32-gcc"
+# For linking C++ code if needed (not strictly necessary for this project, but good practice)
+ar = "x86_64-w64-mingw32-gcc-ar"

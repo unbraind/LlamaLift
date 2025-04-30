@@ -1,0 +1,36 @@
+[package]
+name = "LlamaLift"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "A small GUI application for managing Ollama models (pull, list, delete)."
+authors = ["unbrained <stefan@preu.at>"]
+repository = "https://github.com/unbraind/LlamaLift"
+
+[dependencies]
+eframe = { version = "0.31.1", features = ["persistence"] }
+egui = "0.31.1"
+image = { version = "0.25", default-features = false, features = ["png"] }
+reqwest = { version = "0.11", features = ["json", "stream"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+futures-util = "0.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+dotenvy = "0.15"
+log = "0.4"
+env_logger = "0.9"
+confy = "0.5"
+chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.8"
+
+[build-dependencies]
+winres = "0.1"
+
+[package.metadata.build]
+rerun-if-changed = ["build.rs"]
+
+[profile.release]
+lto = true
+opt-level = 3
+codegen-units = 1
+panic = 'abort'
