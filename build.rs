@@ -1,6 +1,5 @@
 fn main() {
     if std::env::var("CARGO_CFG_TARGET_OS").map_or(false, |os| os == "windows") {
-        // Ensure cargo reruns the build script if these files change
         println!("cargo:rerun-if-changed=assets/LlamaLift.ico");
         println!("cargo:rerun-if-changed=build.rs");
 
@@ -8,8 +7,8 @@ fn main() {
             // Set the icon for the executable.
             .set_icon("assets/LlamaLift.ico")
             // Set version information
-            .set("FileVersion", "0.1.0.0")
-            .set("ProductVersion", "0.1.0")
+            .set("FileVersion", "0.1.1.0")
+            .set("ProductVersion", "0.1.1")
             .set("ProductName", "LlamaLift")
             .set("FileDescription", "Ollama Model Management GUI")
             .set("LegalCopyright", "MIT License")
@@ -20,4 +19,3 @@ fn main() {
         }
     }
 }
-

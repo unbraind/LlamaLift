@@ -1,4 +1,5 @@
 [![LlamaLift Logo](assets/LlamaLift.png)](assets/LlamaLift.png)
+*(Logo embedded within the application)*
 
 **A simple Rust & egui based GUI application for managing models on a local or remote Ollama server.**
 
@@ -25,6 +26,7 @@ LlamaLift provides a simple graphical user interface to interact with an [Ollama
 It features a simple two-tab interface, real-time progress updates for downloads, and an integrated log viewer.
 
 ## Screenshots TODO
+
 
 ## Features
 
@@ -156,3 +158,7 @@ LlamaLift relies on several great Rust crates, including:
 ## License
 
 [MIT](LICENSE)
+
+---
+
+*LlamaLift - Gently lifting your Ollama models.*
