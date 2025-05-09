@@ -1,11 +1,10 @@
 [![LlamaLift Logo](assets/LlamaLift.png)](assets/LlamaLift.png)
-*(Logo embedded within the application)*
 
 **A simple Rust & egui based GUI application for managing models on a local or remote Ollama server.**
 
 ---
 
-🚨 **CRITICAL WARNING: VIBE CODED & UNTRUSTWORTHY** 🚨
+圷 **CRITICAL WARNING: VIBE CODED & UNTRUSTWORTHY** 圷
 
 > This application was developed based purely on vibes, guesswork, and maybe a little bit of Stack Overflow driven development. **It has NOT undergone rigorous testing, formal verification, or any semblance of professional quality assurance.**
 >
@@ -17,7 +16,7 @@
 
 ## Overview
 
-LlamaLift provides a simple graphical user interface to interact with an [Ollama](https://ollama.com/) instance. It allows you to:
+LlamaLift provides a simple graphical user interface to interact with an [Ollama](https://github.com/ollama/ollama/blob/main/docs/api.md) instance. It allows you to:
 
 * **List:** View models currently downloaded on the Ollama server.
 * **Download:** Pull new models from the Ollama library (or specified sources).
@@ -32,18 +31,28 @@ It features a simple two-tab interface, real-time progress updates for downloads
 
 * **Graphical User Interface:** Built with Rust's `egui` library (via `eframe`).
 * **Ollama Interaction:** Connects to a specified Ollama host (`OLLAMA_HOST`).
-* **Model Listing:** Displays downloaded models with name, size (human-readable), and last modified date (respecting local timezone).
+    * Includes an initial connectivity check on startup.
+* **Model Listing & Management:**
+    * Displays downloaded models with name, size (human-readable), and last modified date (respecting local timezone).
+    * Shows additional model details: Digest (shortened with full digest on hover), Format, Family, Families, Parameter Size, and Quantization Level.
+    * Table columns are configurable via a "Select Columns" window, allowing users to choose which details to display.
+    * Column widths in the model table are persistent and saved across sessions.
+    * Enhanced sorting capabilities: sort models by various attributes (Name, Size, Modified Date, Digest, etc.). The sort state (column and direction) is also persistent.
 * **Model Download:**
     * Enter one or multiple model identifiers (e.g., `llama3:latest`, `mistral`).
+    * Dynamically add or remove model input fields in the "Download Models" view (up to 100 fields).
     * Supports batch downloading of multiple models sequentially.
     * Streams download progress from Ollama, showing status messages and a progress bar per layer/file.
+    * Displays an overall progress bar for the entire batch download in addition to individual model progress.
 * **Model Deletion:**
     * Select models from the list to delete.
     * Includes a confirmation dialog to prevent accidental deletion.
 * **Configuration:**
     * Reads initial defaults from `.env` file or environment variables (`OLLAMA_HOST`, `LOG_LEVEL`, `TZ`).
-    * Uses `confy` for persistent runtime settings (Ollama host, log level, timezone) stored in a platform-specific configuration file.
+    * Uses `confy` for persistent runtime settings (Ollama host, log level, timezone, table column states, and sort state) stored in a platform-specific configuration file.
     * Provides an in-app "Settings" window to modify these persistent settings.
+    * Settings changes in the window are staged and only applied upon explicit "Save & Close", allowing changes to be cancelled.
+    * The path to the active configuration file is displayed within the Settings window.
 * **Logging:**
     * Logs application events using `env_logger`.
     * Displays INFO level (and higher) logs directly within a collapsible panel in the GUI.
@@ -71,13 +80,15 @@ If you prefer to build it yourself or if binaries are not provided for your plat
 1.  **Install Rust:** If you don't have it, install the Rust toolchain from [rustup.rs](https://rustup.rs/).
 2.  **Clone the Repository:**
     ```bash
-    git clone [https://github.com/unbraind/LlamaLift.git](https://github.com/unbraind/LlamaLift.git) 
+    git clone [https://github.com/unbraind/LlamaLift.git](https://github.com/unbraind/LlamaLift.git)
     cd LlamaLift
     ```
-3.  **System Dependencies (Linux):** You might need to install development packages for GUI libraries. Common requirements include:
-    * **Debian/Ubuntu:** `sudo apt-get update && sudo apt-get install libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libgtk-3-dev`
-    * **Fedora:** `sudo dnf install libxcb-devel libxkbcommon-devel gtk3-devel`
-    * *(Check `eframe` documentation for the latest/most accurate list for your distribution)*
+3.  **System Dependencies:** `eframe` (the GUI framework used) might require certain system libraries for building.
+    * **Linux:** You might need to install development packages for GUI libraries. Common requirements include libraries for X11, Wayland, and potentially GTK or other windowing system components. For example:
+        * Debian/Ubuntu: `sudo apt-get update && sudo apt-get install libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libgtk-3-dev libwayland-dev libegl1-mesa-dev libfontconfig1-dev libdbus-1-dev`
+        * Fedora: `sudo dnf install libxcb-devel libxkbcommon-devel gtk3-devel wayland-devel mesa-libEGL-devel fontconfig-devel dbus-devel`
+    * **macOS/Windows:** Dependencies are usually handled more automatically by Cargo and the Rust toolchain, but ensure your build environment is set up (e.g., Xcode Command Line Tools on macOS, Build Tools for Visual Studio on Windows if compiling native modules that might need them, though `eframe` aims to minimize this).
+    * *(For the most up-to-date and comprehensive list, please refer to the `eframe` or `egui` documentation for your specific operating system and distribution.)*
 4.  **Build:**
     ```bash
     cargo build --release
@@ -100,7 +111,7 @@ LlamaLift uses a layered configuration approach:
 2.  **Persistent Settings (`confy`):**
     * After the first run (or if modified via the Settings window), LlamaLift uses `confy` to store settings persistently. These settings **override** any `.env`/environment variables.
     * The configuration file location depends on your OS:
-        * **Linux:** `~/.config/LlamaLift/default-config.toml` (or `$XDG_CONFIG_HOME`)
+        * **Linux:** `~/.config/LlamaLift/default-config.toml` (or `$XDG_CONFIG_HOME/LlamaLift/default-config.toml`)
         * **macOS:** `~/Library/Application Support/dev.unbrained.LlamaLift/default-config.toml`
         * **Windows:** `C:\Users\<YourUsername>\AppData\Roaming\unbrained\LlamaLift\config\default-config.toml`
     * You can check the application logs upon startup to see the exact path being used.
@@ -116,12 +127,12 @@ LlamaLift uses a layered configuration approach:
 2.  **Configure (if necessary):** Ensure the `OLLAMA_HOST` points to your Ollama server either via `.env`/environment variable on first run or via the `File -> Settings` menu.
 3.  **Manage Models View:**
     * This is the default view.
-    * Click `🔄 Refresh List` to fetch the list of models from the Ollama server.
+    * Click `売 Refresh List` to fetch the list of models from the Ollama server.
     * Models are displayed in a table.
-    * Click the `🗑 Delete` button next to a model to remove it (a confirmation prompt will appear).
+    * Click the `卵 Delete` button next to a model to remove it (a confirmation prompt will appear).
 4.  **Download Models View:**
     * Switch to this view using the top selector buttons.
-    * Enter one or more model identifiers (e.g., `llama3`, `mistral:7b-instruct-q4_K_M`) into the text fields. An empty field automatically adds a new input row (up to 100). Use the `➖` button to remove fields.
+    * Enter one or more model identifiers (e.g., `llama3`, `mistral:7b-instruct-q4_K_M`) into the text fields. An empty field automatically adds a new input row (up to 100). Use the `筐冒 button to remove fields.
     * Click `Download Models`.
     * The application will download the models sequentially. Progress for the current download is shown in the progress bar and status text. Detailed steps are logged in the "Logs" panel.
 5.  **Logs Panel:**
@@ -143,17 +154,32 @@ LlamaLift uses a layered configuration approach:
 
 ## Dependencies
 
-LlamaLift relies on several great Rust crates, including:
+LlamaLift relies on several great Rust crates, as specified in `Cargo.toml`:
 
-* `eframe` / `egui`: For the GUI.
-* `tokio`: For asynchronous operations.
-* `reqwest`: For making HTTP requests to the Ollama API.
-* `serde` / `serde_json`: For JSON parsing.
-* `confy`: For easy persistent configuration.
-* `dotenvy`: For reading `.env` files.
-* `log` / `env_logger`: For logging.
-* `chrono` / `chrono-tz`: For time and timezone handling.
-* `futures-util`: For stream processing.
+* **GUI Framework:**
+    * `eframe` (with `persistence` feature)
+    * `egui`
+    * `egui_extras` (for table functionality)
+* **Asynchronous Operations:**
+    * `tokio` (with `rt-multi-thread`, `macros` features)
+    * `futures-util`
+* **HTTP & Networking:**
+    * `reqwest` (with `json`, `stream` features)
+* **Serialization & Configuration:**
+    * `serde` (with `derive` feature)
+    * `serde_json`
+    * `confy`
+    * `dotenvy`
+* **Logging:**
+    * `log`
+    * `env_logger`
+* **Date & Time:**
+    * `chrono` (with `serde` feature)
+    * `chrono-tz`
+* **Image Handling:**
+    * `image` (with `png` feature, default features disabled)
+* **Build (Windows Specific):**
+    * `winres` (in `[build-dependencies]`)
 
 ## License
 
