@@ -4,7 +4,7 @@
 
 ---
 
-圷 **CRITICAL WARNING: VIBE CODED & UNTRUSTWORTHY** 圷
+🚨  **CRITICAL WARNING: VIBE CODED & UNTRUSTWORTHY** 🚨 
 
 > This application was developed based purely on vibes, guesswork, and maybe a little bit of Stack Overflow driven development. **It has NOT undergone rigorous testing, formal verification, or any semblance of professional quality assurance.**
 >
@@ -127,12 +127,12 @@ LlamaLift uses a layered configuration approach:
 2.  **Configure (if necessary):** Ensure the `OLLAMA_HOST` points to your Ollama server either via `.env`/environment variable on first run or via the `File -> Settings` menu.
 3.  **Manage Models View:**
     * This is the default view.
-    * Click `売 Refresh List` to fetch the list of models from the Ollama server.
+    * Click `🔄 Refresh List` to fetch the list of models from the Ollama server.
     * Models are displayed in a table.
-    * Click the `卵 Delete` button next to a model to remove it (a confirmation prompt will appear).
+    * Click the `🗑 Delete` button next to a model to remove it (a confirmation prompt will appear).
 4.  **Download Models View:**
     * Switch to this view using the top selector buttons.
-    * Enter one or more model identifiers (e.g., `llama3`, `mistral:7b-instruct-q4_K_M`) into the text fields. An empty field automatically adds a new input row (up to 100). Use the `筐冒 button to remove fields.
+    * Enter one or more model identifiers (e.g., `llama3`, `mistral:7b-instruct-q4_K_M`) into the text fields. An empty field automatically adds a new input row (up to 100). Use the ➖ button to remove fields.
     * Click `Download Models`.
     * The application will download the models sequentially. Progress for the current download is shown in the progress bar and status text. Detailed steps are logged in the "Logs" panel.
 5.  **Logs Panel:**
