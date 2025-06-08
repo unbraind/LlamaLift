@@ -17,6 +17,7 @@ pub const MAX_MODEL_INPUTS: usize = 100;
 pub const DEFAULT_TZ: &str = "Europe/Vienna";
 pub const DEFAULT_LOG_LEVEL: &str = "INFO";
 pub const DEFAULT_OLLAMA_HOST: &str = "127.0.0.1:11434";
+pub const MAX_LOG_ENTRIES: usize = 1000; // Max number of log entries to keep
 
 // --- Configuration Structs ---
 
