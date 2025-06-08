@@ -7,6 +7,8 @@ pub mod state;
 pub mod ollama;
 pub mod ui;
 pub mod utils;
+#[cfg(test)]
+mod column_sync_tests; // Add the test module
 
 // Use necessary external crates
 use chrono_tz::Tz;
