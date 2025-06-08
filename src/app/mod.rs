@@ -19,9 +19,9 @@ use eframe::{
     },
     App, CreationContext,
 };
-use log::{debug, error, info, warn};
+use log::{debug, error, info, warn, Level as LogLevel}; // Added LogLevel
 use std::{
-    collections::HashSet,
+    collections::{HashSet, VecDeque}, // Added VecDeque
     path::PathBuf,
     str::FromStr,
     sync::{
@@ -34,8 +34,8 @@ use tokio::runtime::Runtime; // Async runtime
 
 // Use types defined in sibling modules
 use self::{
-    config::{AppSettings, Config, APP_NAME, SCRIPT_VERSION}, // Import AppSettings and Config
-    ollama::OllamaModel,
+    config::{AppSettings, Config, APP_NAME, SCRIPT_VERSION, MAX_LOG_ENTRIES}, // Import AppSettings, Config, MAX_LOG_ENTRIES
+    ollama::{OllamaClient, OllamaModel}, // Added OllamaClient
     state::{
         AppStatus, AppView, ColumnState, ModelColumn, SortDirection, SortState, UpdateMessage,
     },
@@ -49,15 +49,15 @@ use self::{
 pub struct OllamaPullerApp {
     // --- UI State ---
     model_inputs: Vec<String>,
-    logs: Arc<Mutex<Vec<String>>>,
-    logs_string_cache: String,
-    logs_dirty: bool,
+    logs: Arc<Mutex<VecDeque<(LogLevel, String, i64)>>>, // Changed to VecDeque of structured logs
+    // logs_string_cache: String, // Will be generated on demand by get_formatted_logs or copy_logs_to_clipboard
+    // logs_dirty: bool, // Will reformat on demand
     logs_collapsed: bool,
-    show_settings_window: bool,
+    pub show_settings_window: bool, // Made public for tests
     show_about_window: bool,
     show_select_columns_window: bool,
     current_view: AppView,
-    model_to_delete: Option<String>,
+    pub model_to_delete: Option<String>, // Made public
     copy_logs_requested: bool,
 
     // --- Application State & Data ---
@@ -74,17 +74,18 @@ pub struct OllamaPullerApp {
     // --- Table State & Cache ---
     model_column_states: Vec<ColumnState>,
     model_sort_state: SortState,
-    manage_view_cache: Vec<OllamaModel>,
+    pub manage_view_cache: Vec<OllamaModel>, // Made public
     manage_view_cache_dirty: bool,
 
     // --- Temporary State for Windows ---
     pending_column_states: Option<Vec<ColumnState>>,
-    pending_settings: Option<AppSettings>,
+    pub pending_settings: Option<AppSettings>, // Made public for tests
 
     // --- Communication & Async ---
     task_update_sender: Sender<UpdateMessage>, // Sender clone passed from main.rs
     update_receiver: Receiver<UpdateMessage>, // Receiver passed from main.rs
     rt: Arc<Runtime>,
+    pub ollama_client: Arc<OllamaClient>, // Made ollama_client public
 }
 
 // --- Application Implementation ---
@@ -208,12 +209,16 @@ impl OllamaPullerApp {
             }
         }
 
+        // Create the Ollama client
+        let ollama_client = Arc::new(OllamaClient::new(settings.ollama_host.clone(), None));
+
         // Create the app instance
         let mut app = Self {
+            ollama_client, // Store the client
             model_inputs: vec!["".to_string()],
-            logs: Arc::new(Mutex::new(Vec::new())),
-            logs_string_cache: String::new(),
-            logs_dirty: true,
+            logs: Arc::new(Mutex::new(VecDeque::with_capacity(MAX_LOG_ENTRIES))), // Initialize new logs
+            // logs_string_cache: String::new(), // Removed
+            // logs_dirty: true, // Removed
             logs_collapsed: true,
             progress: Arc::new(Mutex::new(0.0)),
             status_text: Arc::new(Mutex::new("Idle".to_string())),
@@ -254,14 +259,145 @@ impl OllamaPullerApp {
         app // Return the initialized app
     }
 
-    /// Rebuilds the cached log string if the logs are marked as dirty.
-    fn rebuild_log_cache(&mut self) {
-        if self.logs_dirty {
-            let logs_vec = self.logs.lock().unwrap();
-            self.logs_string_cache = logs_vec.join("\n");
-            self.logs_dirty = false;
+    /// Applies the staged settings, saves them, and updates relevant parts of the app.
+    pub fn save_pending_settings_and_apply(&mut self) {
+        if let Some(staged_settings) = self.pending_settings.take() {
+            // Check if Ollama host changed to re-initialize client
+            if self.settings.ollama_host != staged_settings.ollama_host {
+                info!(
+                    "Ollama host changed from {} to {}. Re-initializing client.",
+                    self.settings.ollama_host, staged_settings.ollama_host
+                );
+                self.ollama_client = Arc::new(OllamaClient::new(
+                    staged_settings.ollama_host.clone(),
+                    None, // No override when applying settings
+                ));
+                // Optionally, trigger a connection check or list refresh here if desired
+                 let _ = self.task_update_sender.send(UpdateMessage::Log(format!(
+                    "INFO: Ollama host updated to {}. Client re-initialized.",
+                    staged_settings.ollama_host
+                )));
+            }
+            // Check if log level changed to apply it (if app supports dynamic log level changes)
+            if self.settings.log_level != staged_settings.log_level {
+                info!("Log level changed to {:?}. Note: May require restart for full effect depending on logger.", staged_settings.log_level);
+                // Actual dynamic log level change depends on the logger implementation.
+                // For now, we just update the setting.
+                 let _ = self.task_update_sender.send(UpdateMessage::Log(format!(
+                    "INFO: Log level updated to {:?}.",
+                    staged_settings.log_level
+                )));
+            }
+             if self.settings.tz != staged_settings.tz {
+                info!("Timezone changed to {}. Model list times will update on next refresh.", staged_settings.tz);
+                self.manage_view_cache_dirty = true; // Mark cache dirty to re-format dates
+                 let _ = self.task_update_sender.send(UpdateMessage::Log(format!(
+                    "INFO: Timezone updated to {}.",
+                    staged_settings.tz
+                )));
+            }
+
+            self.settings = staged_settings;
+            self.save_settings(); // Persist to disk
         }
+        self.show_settings_window = false; // Close the settings window
     }
+
+    /// Sorts the model list by the given column.
+    /// Toggles direction if the same column is sorted repeatedly.
+    /// Saves the new sort state.
+    pub fn sort_models(&mut self, column: ModelColumn) {
+        if self.model_sort_state.column == column {
+            // Toggle direction
+            self.model_sort_state.direction = match self.model_sort_state.direction {
+                SortDirection::Ascending => SortDirection::Descending,
+                SortDirection::Descending => SortDirection::Ascending,
+            };
+        } else {
+            self.model_sort_state.column = column;
+            self.model_sort_state.direction = SortDirection::Ascending; // Default to ascending for new column
+        }
+        self.manage_view_cache_dirty = true;
+        // The tests directly assign to app.models and expect it to be sorted.
+        // For this test structure to work, rebuild_manage_view_cache should sort listed_models
+        // and the tests should check manage_view_cache, or sort_models should sort listed_models directly.
+        // Let's assume the test implies sort_models should sort the primary list `listed_models`
+        // and then `rebuild_manage_view_cache` will use that sorted list.
+        // However, `rebuild_manage_view_cache` sorts a *clone* of `listed_models`.
+        // For the tests to pass as written (asserting on app.models),
+        // sort_models needs to sort the same data source the tests are setting up.
+        // The tests use `app.models = vec![...]`. This field is `app.listed_models` in the actual app.
+        // So, we sort `listed_models` here, then `rebuild_manage_view_cache` will use it.
+
+        // The primary sort logic is in `rebuild_manage_view_cache`.
+        // We just need to ensure it's called after updating sort state.
+        self.rebuild_manage_view_cache(); // This will sort `listed_models` into `manage_view_cache`
+        self.save_settings(); // Persist the new sort state
+    }
+
+    /// Adds a new log message to the internal log buffer, enforcing MAX_LOG_ENTRIES.
+    pub fn add_log_message(&mut self, level: LogLevel, msg: String) {
+        let mut logs_guard = self.logs.lock().unwrap();
+        if logs_guard.len() >= MAX_LOG_ENTRIES {
+            logs_guard.pop_front(); // Remove the oldest log entry
+        }
+        let timestamp_ms = chrono::Utc::now().timestamp_millis();
+        logs_guard.push_back((level, msg, timestamp_ms));
+        // self.logs_dirty = true; // No longer needed if formatting on demand
+    }
+
+    /// Formats a single log message with timezone.
+    fn format_log_message_with_timezone(
+        &self,
+        level: &LogLevel,
+        msg: &str,
+        timestamp_ms: i64,
+        tz: &Tz,
+    ) -> String {
+        let dt = chrono::Utc.timestamp_millis_opt(timestamp_ms).unwrap().with_timezone(tz);
+        format!("[{}] ({}) {}", dt.format("%Y-%m-%d %H:%M:%S"), level, msg)
+    }
+
+    /// Returns all stored logs formatted as a single string with newlines.
+    pub fn get_formatted_logs(&self) -> String {
+        let logs_guard = self.logs.lock().unwrap();
+        let mut log_string = String::new();
+        for (level, msg, ts) in logs_guard.iter() {
+            log_string.push_str(&self.format_log_message_with_timezone(level, msg, *ts, &self.settings.tz));
+            log_string.push('\n');
+        }
+        log_string
+    }
+
+    /// Copies all formatted logs to the clipboard.
+    pub fn copy_logs_to_clipboard(&mut self, ctx: &Context) {
+        let log_string = self.get_formatted_logs();
+        if !log_string.is_empty() {
+            ctx.output_mut(|o| o.copied_text = log_string);
+            // The test expects status_text and status_time to be updated.
+            // However, OllamaPullerApp uses UpdateMessage for status changes.
+            // For simplicity in this refactor, directly update status_text for now.
+            // A more consistent approach would be to send an UpdateMessage.
+            *self.status_text.lock().unwrap() = "Logs copied to clipboard.".to_string();
+            // self.status_time = Some(std::time::Instant::now()); // status_time does not exist
+            let _ = self.task_update_sender.send(UpdateMessage::Log("INFO: Logs copied to clipboard.".to_string()));
+        } else {
+            *self.status_text.lock().unwrap() = "No logs to copy.".to_string();
+            let _ = self.task_update_sender.send(UpdateMessage::Log("WARN: No logs to copy.".to_string()));
+        }
+        // The original logic for copy_logs_requested was in app.update(), this method would be called from there.
+        self.copy_logs_requested = false; // Reset the flag after handling
+    }
+
+
+    /// Rebuilds the cached log string if the logs are marked as dirty.
+    // fn rebuild_log_cache(&mut self) { // This method is no longer needed due to on-demand formatting
+    //     if self.logs_dirty {
+    //         let logs_vec = self.logs.lock().unwrap();
+    //         self.logs_string_cache = logs_vec.join("\n");
+    //         self.logs_dirty = false;
+    //     }
+    // }
 
     /// Rebuilds the cached and sorted model list for the Manage view if dirty.
     fn rebuild_manage_view_cache(&mut self) {
@@ -361,10 +497,11 @@ impl OllamaPullerApp {
     /// Spawns an asynchronous task to refresh the list of models from the Ollama server.
     fn refresh_model_list(&self) {
         // Keep as &self, state changes happen via messages
-        let config = self.get_current_config();
+        let config_tz = self.get_current_config().tz; // Only tz is needed from config now
         let sender = self.task_update_sender.clone();
         let rt_handle = self.rt.clone();
         let status_arc = self.status.clone();
+        let client = self.ollama_client.clone(); // Clone Arc for the async block
 
         // Use try_lock to avoid blocking UI if lock is held (though unlikely here)
         if let Ok(mut current_status) = status_arc.try_lock() {
@@ -398,7 +535,7 @@ impl OllamaPullerApp {
         info!("Refreshing model list...");
 
         rt_handle.spawn(async move {
-            match ollama::list_models_async(&config, sender.clone()).await {
+            match client.list_models_async(config_tz, sender.clone()).await {
                 Ok(models) => {
                     info!("Successfully listed {} models.", models.len());
                     let _ = sender.send(UpdateMessage::ModelList(models)); // Send the new list
@@ -420,11 +557,12 @@ impl OllamaPullerApp {
     /// Spawns an asynchronous task to delete a specified model from the Ollama server.
     fn trigger_delete_model(&self, model_name: &str) {
         // Keep as &self
-        let config = self.get_current_config();
+        // let config = self.get_current_config(); // Config not needed anymore here
         let sender = self.task_update_sender.clone();
         let rt_handle = self.rt.clone();
         let status_arc = self.status.clone();
         let model_name_clone = model_name.to_string();
+        let client = self.ollama_client.clone(); // Clone Arc for the async block
 
         // Use try_lock
         if let Ok(mut current_status) = status_arc.try_lock() {
@@ -456,7 +594,7 @@ impl OllamaPullerApp {
         info!("Attempting to delete model {}...", model_name_clone);
 
         rt_handle.spawn(async move {
-            match ollama::delete_model_async(&model_name_clone, &config, sender.clone()).await {
+            match client.delete_model_async(&model_name_clone, sender.clone()).await {
                 Ok(_) => {
                     info!("Successfully deleted model '{}'.", model_name_clone);
                     let _ = sender.send(UpdateMessage::Log(format!(
@@ -514,9 +652,8 @@ impl App for OllamaPullerApp {
             needs_repaint = true; // Any message likely requires a repaint
             match msg {
                 UpdateMessage::Log(log_line) => {
-                    let mut logs = self.logs.lock().unwrap();
-                    logs.push(log_line);
-                    self.logs_dirty = true;
+                    // Assume INFO level for logs coming via this old path for now
+                    self.add_log_message(LogLevel::Info, log_line);
                 }
                 UpdateMessage::Progress(p) => *self.progress.lock().unwrap() = p,
                 UpdateMessage::StatusText(s) => *self.status_text.lock().unwrap() = s,
@@ -558,7 +695,7 @@ impl App for OllamaPullerApp {
         }
 
         // --- 4. Rebuild Log Cache ---
-        self.rebuild_log_cache(); // Rebuild log cache if necessary
+        // self.rebuild_log_cache(); // No longer needed, logs formatted on demand
 
         // --- 5. Handle Other Actions ---
         let current_status = self.status.lock().unwrap().clone();
@@ -568,19 +705,8 @@ impl App for OllamaPullerApp {
         );
 
         if self.copy_logs_requested {
-            if !self.logs_string_cache.is_empty() {
-                ctx.copy_text(self.logs_string_cache.clone());
-                info!("Logs copied to clipboard.");
-                let _ = self
-                    .task_update_sender
-                    .send(UpdateMessage::Log("INFO: Logs copied to clipboard.".to_string()));
-            } else {
-                warn!("Log buffer is empty, nothing to copy.");
-                let _ = self.task_update_sender.send(UpdateMessage::Log(
-                    "WARN: Log buffer is empty, nothing to copy.".to_string(),
-                ));
-            }
-            self.copy_logs_requested = false;
+            self.copy_logs_to_clipboard(ctx); // Call the new method
+            // copy_logs_requested is reset inside copy_logs_to_clipboard
             needs_repaint = true;
         }
 
@@ -651,7 +777,12 @@ impl App for OllamaPullerApp {
         CentralPanel::default().show(ctx, |ui| {
             match self.current_view {
                 AppView::Download => {
-                    views::download_view::draw_download_view(self, ui, &current_status);
+                    views::download_view::draw_download_view(
+                        self,
+                        ui,
+                        &current_status,
+                        self.ollama_client.clone(), // Pass the client
+                    );
                 }
                 AppView::ManageModels => {
                     // Cache rebuild happens inside draw_manage_models_view if needed

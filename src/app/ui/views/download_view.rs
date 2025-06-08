@@ -3,6 +3,7 @@
 
 use crate::app::{
     config::MAX_MODEL_INPUTS,
+    ollama::OllamaClient, // Added OllamaClient
     state::{AppStatus, UpdateMessage},
     OllamaPullerApp,
 };
@@ -10,7 +11,7 @@ use egui::{
     Button, ProgressBar, ScrollArea, TextEdit, Ui,
 };
 use log::{error, info};
-use std::time::Duration;
+use std::{sync::Arc, time::Duration}; // Added Arc
 
 // --- View Drawing Functions ---
 
@@ -21,7 +22,13 @@ use std::time::Duration;
 // * app - Mutable reference to the main application state (OllamaPullerApp).
 // * ui - Mutable reference to the egui UI context for drawing.
 // * current_status - The current application status (AppStatus).
-pub fn draw_download_view(app: &mut OllamaPullerApp, ui: &mut Ui, current_status: &AppStatus) {
+// * ollama_client - Shared reference to the Ollama API client.
+pub fn draw_download_view(
+    app: &mut OllamaPullerApp,
+    ui: &mut Ui,
+    current_status: &AppStatus,
+    ollama_client: Arc<OllamaClient>, // Added ollama_client
+) {
     // Check if the application is currently in a pulling state
     let is_pulling = matches!(current_status, AppStatus::Pulling(_, _));
 
@@ -116,10 +123,11 @@ pub fn draw_download_view(app: &mut OllamaPullerApp, ui: &mut Ui, current_status
             )));
 
             // Get necessary resources for the async task
-            let current_config = app.get_current_config();
+            // let current_config = app.get_current_config(); // No longer needed for pull
             let sender = app.task_update_sender.clone(); // Clone sender for the task
             let rt_handle = app.rt.clone(); // Clone Tokio runtime handle
             let status_arc = app.status.clone(); // Clone Arc for status
+            let client_clone = ollama_client.clone(); // Clone Arc for the async task
 
             // Set initial status for pulling
             // Use 1-based indexing for UI display (current model number)
@@ -154,12 +162,7 @@ pub fn draw_download_view(app: &mut OllamaPullerApp, ui: &mut Ui, current_status
                     let _ = sender.send(UpdateMessage::Progress(0.0)); // Reset progress for this model
 
                     // Call the async pull function
-                    match crate::app::ollama::pull_model_async(
-                        model_id,
-                        &current_config,
-                        sender.clone(),
-                    )
-                    .await
+                    match client_clone.pull_model_async(model_id, sender.clone()).await
                     {
                         Ok(_) => {
                             // Handle successful pull
