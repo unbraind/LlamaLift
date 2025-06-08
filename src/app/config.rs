@@ -53,13 +53,26 @@ pub struct AppSettings {
 pub fn default_column_states() -> Vec<ColumnState> {
     ModelColumn::all()
         .into_iter()
-        .map(|col| ColumnState {
-            visible: matches!(
-                col,
-                ModelColumn::Name | ModelColumn::Size | ModelColumn::Modified
-            ),
-            column: col,
-            width: None,
+        .map(|col| {
+            let default_width = match col {
+                ModelColumn::Name => Some(250.0),
+                ModelColumn::Size => Some(100.0),
+                ModelColumn::Modified => Some(180.0),
+                ModelColumn::Digest => Some(120.0),
+                ModelColumn::Format => Some(100.0),
+                ModelColumn::Family => Some(120.0),
+                ModelColumn::Families => Some(120.0),
+                ModelColumn::ParameterSize => Some(120.0),
+                ModelColumn::QuantizationLevel => Some(150.0),
+            };
+            ColumnState {
+                visible: matches!(
+                    col,
+                    ModelColumn::Name | ModelColumn::Size | ModelColumn::Modified
+                ),
+                column: col,
+                width: default_width,
+            }
         })
         .collect()
 }
@@ -75,6 +88,132 @@ impl Default for AppSettings {
             model_column_states: default_column_states(),
             model_sort_state: SortState::default(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::state::ModelColumn;
+
+    #[test]
+    fn test_default_column_states_widths() {
+        let states = default_column_states();
+        assert_eq!(states.len(), ModelColumn::all().len(), "Should have a state for every ModelColumn variant");
+
+        for state in states {
+            let expected_width = match state.column {
+                ModelColumn::Name => Some(250.0),
+                ModelColumn::Size => Some(100.0),
+                ModelColumn::Modified => Some(180.0),
+                ModelColumn::Digest => Some(120.0),
+                ModelColumn::Format => Some(100.0),
+                ModelColumn::Family => Some(120.0),
+                ModelColumn::Families => Some(120.0),
+                ModelColumn::ParameterSize => Some(120.0),
+                ModelColumn::QuantizationLevel => Some(150.0),
+            };
+            assert_eq!(state.width, expected_width, "Default width for {:?} is incorrect", state.column);
+
+            let expected_visibility = matches!(
+                state.column,
+                ModelColumn::Name | ModelColumn::Size | ModelColumn::Modified
+            );
+            assert_eq!(state.visible, expected_visibility, "Default visibility for {:?} is incorrect", state.column);
+        }
+    }
+
+    #[test]
+    fn test_app_settings_default_uses_default_column_states() {
+        // To isolate this test, we don't want .env or real env vars to interfere
+        // with load_initial_config() which is called by AppSettings::default().
+        // We can temporarily clear env vars that load_initial_config() uses.
+        let orig_tz = std::env::var("TZ").ok();
+        let orig_log_level = std::env::var("LOG_LEVEL").ok();
+        let orig_ollama_host = std::env::var("OLLAMA_HOST").ok();
+
+        std::env::remove_var("TZ");
+        std::env::remove_var("LOG_LEVEL");
+        std::env::remove_var("OLLAMA_HOST");
+
+        let default_settings = AppSettings::default();
+        let expected_column_states = default_column_states();
+
+        assert_eq!(default_settings.model_column_states.len(), expected_column_states.len());
+        for i in 0..default_settings.model_column_states.len() {
+            assert_eq!(default_settings.model_column_states[i].column, expected_column_states[i].column);
+            assert_eq!(default_settings.model_column_states[i].visible, expected_column_states[i].visible);
+            assert_eq!(default_settings.model_column_states[i].width, expected_column_states[i].width);
+        }
+
+        // Check a few other default fields to ensure load_initial_config() ran as expected (with defaults)
+        assert_eq!(default_settings.tz, DEFAULT_TZ); // Assuming load_initial_config falls back to DEFAULT_TZ
+        assert_eq!(default_settings.log_level, DEFAULT_LOG_LEVEL);
+        assert_eq!(default_settings.ollama_host, DEFAULT_OLLAMA_HOST);
+
+
+        // Restore original env vars
+        if let Some(val) = orig_tz { std::env::set_var("TZ", val); }
+        if let Some(val) = orig_log_level { std::env::set_var("LOG_LEVEL", val); }
+        if let Some(val) = orig_ollama_host { std::env::set_var("OLLAMA_HOST", val); }
+    }
+
+    #[test]
+    fn test_app_settings_serialization_deserialization() {
+        let mut settings = AppSettings::default();
+        // Modify some settings to ensure they are serialized and deserialized correctly
+        settings.ollama_host = "http://testhost:1234".to_string();
+        settings.log_level = "DEBUG".to_string();
+        settings.tz = "America/New_York".to_string();
+        if let Some(col_state) = settings.model_column_states.iter_mut().find(|cs| cs.column == ModelColumn::Name) {
+            col_state.width = Some(300.0);
+            col_state.visible = true;
+        }
+        if let Some(col_state) = settings.model_column_states.iter_mut().find(|cs| cs.column == ModelColumn::Digest) {
+            col_state.visible = true; // Default is false
+        }
+        settings.model_sort_state = SortState {
+            column: ModelColumn::Size,
+            direction: crate::app::state::SortDirection::Descending,
+        };
+
+        let serialized = serde_json::to_string(&settings).expect("Failed to serialize AppSettings");
+        let deserialized: AppSettings = serde_json::from_str(&serialized).expect("Failed to deserialize AppSettings");
+
+        assert_eq!(deserialized.ollama_host, settings.ollama_host);
+        assert_eq!(deserialized.log_level, settings.log_level);
+        assert_eq!(deserialized.tz, settings.tz);
+        assert_eq!(deserialized.model_sort_state, settings.model_sort_state);
+
+        assert_eq!(deserialized.model_column_states.len(), settings.model_column_states.len());
+        for i in 0..deserialized.model_column_states.len() {
+            assert_eq!(deserialized.model_column_states[i].column, settings.model_column_states[i].column);
+            assert_eq!(deserialized.model_column_states[i].visible, settings.model_column_states[i].visible);
+            assert_eq!(deserialized.model_column_states[i].width, settings.model_column_states[i].width);
+        }
+
+        // Test deserialization of potentially missing fields using #[serde(default)]
+        let partial_json = r#"
+        {
+            "ollama_host": "http://partialhost:5678",
+            "log_level": "TRACE",
+            "tz": "Asia/Tokyo"
+        }
+        "#;
+        // model_column_states and model_sort_state are missing, so they should use their defaults
+        let deserialized_partial: AppSettings = serde_json::from_str(partial_json).expect("Failed to deserialize partial AppSettings");
+
+        assert_eq!(deserialized_partial.ollama_host, "http://partialhost:5678");
+        assert_eq!(deserialized_partial.log_level, "TRACE");
+        assert_eq!(deserialized_partial.tz, "Asia/Tokyo");
+
+        let expected_default_cols = default_column_states();
+        assert_eq!(deserialized_partial.model_column_states.len(), expected_default_cols.len());
+        for i in 0..deserialized_partial.model_column_states.len() {
+            assert_eq!(deserialized_partial.model_column_states[i].column, expected_default_cols[i].column);
+            assert_eq!(deserialized_partial.model_column_states[i].width, expected_default_cols[i].width);
+        }
+        assert_eq!(deserialized_partial.model_sort_state, SortState::default());
     }
 }
 

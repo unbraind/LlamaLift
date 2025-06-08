@@ -247,7 +247,8 @@ pub fn draw_manage_models_view(
              // Try to get the width stored by egui for this specific column ID
              if let Some(new_width) = ui.memory(|m| m.data.get_temp::<f32>(column_id)) {
                  let should_update = match col_state.width {
-                     Some(old_w) => (new_width - old_w).abs() > 0.1,
+                     // Increase tolerance to 1.0 pixels
+                     Some(old_w) => (new_width - old_w).abs() > 1.0,
                      None => true,
                  };
                  if should_update {
